@@ -1,0 +1,37 @@
+{
+    "name": "seamflux",
+    "version": "2.1.2",
+    "description": "Compact framed multiplexed stream protocol for Node.js",
+    "main": "index.js",
+    "type": "commonjs",
+    "files": [
+        "index.js",
+        "SeamFluxStream.js",
+        "SeamFluxSocket.js",
+        "SeamFluxHttp.js",
+        "LICENSE",
+        "README.md",
+        "CHANGELOG.md",
+        "example",
+        "test.js",
+        "AGENTS.md"
+    ],
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "test": "node test.js"
+    },
+    "devDependencies": {
+        "express": "^5.1.0"
+    },
+    "keywords": [
+        "protocol",
+        "stream",
+        "tcp",
+        "multiplexing",
+        "rpc",
+        "framing"
+    ],
+    "license": "SEE LICENSE IN LICENSE"
+}
