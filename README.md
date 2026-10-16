@@ -1,4 +1,4 @@
-# SeamFlux 2.1.0
+# SeamFlux 2.1.2
 
 Compact framed multiplexed stream protocol for Node.js.
 

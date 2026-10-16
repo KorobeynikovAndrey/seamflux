@@ -1,4 +1,4 @@
-# SeamFlux 2.1.0 — AI Usage Guide
+# SeamFlux 2.1.2 — AI Usage Guide
 
 SeamFlux is a bidirectional framed protocol for Node.js built on top of `Duplex`.
 
