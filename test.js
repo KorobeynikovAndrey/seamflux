@@ -1,377 +1,247 @@
-const assert = require('assert');
-const http = require('http');
-const net = require('net');
-const { PassThrough } = require('stream');
-const { SeamFluxStream, SocketServer, SeamFluxHttp, KIND, CODEC } = require('./');
+const assert = require('node:assert/strict');
+const v8 = require('node:v8');
+const { once } = require('node:events');
+const {
+    SeamFluxCore,
+    SeamFluxStream,
+    SocketClient,
+    SocketServer,
+    KIND,
+    CODEC
+} = require('./');
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function connectCore(a, b) {
+    a.on('output', data => b.input(data));
+    b.on('output', data => a.input(data));
+}
 
-function wireFrame(id, kind, codec, payload) {
-    payload = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
-
-    const head = Buffer.allocUnsafe(10);
+function makeFrame(id, kind, codec, payload = Buffer.alloc(0)) {
+    const head = Buffer.alloc(10);
     head.writeUInt32BE(10 + payload.length, 0);
     head.writeUInt32BE(id, 4);
     head.writeUInt8(kind, 8);
     head.writeUInt8(codec, 9);
-
     return Buffer.concat([head, payload]);
 }
 
-function parseFrames(buffer) {
-    const frames = [];
-    let offset = 0;
+async function testCore() {
+    const client = new SeamFluxCore(false);
+    const server = new SeamFluxCore(true);
+    connectCore(client, server);
 
-    while (offset < buffer.length) {
-        const length = buffer.readUInt32BE(offset);
-        const id = buffer.readUInt32BE(offset + 4);
-        const kind = buffer.readUInt8(offset + 8);
-        const codec = buffer.readUInt8(offset + 9);
+    assert.equal(client.codec, CODEC.V8);
+    assert.equal(server.codec, CODEC.V8);
 
-        frames.push({ id, kind, codec, payload: buffer.subarray(offset + 10, offset + length) });
-        offset += length;
-    }
-
-    assert.strictEqual(offset, buffer.length);
-    return frames;
-}
-
-async function testBasicApi() {
-    const client = new SeamFluxStream(false);
-    const server = new SeamFluxStream(true);
-
-    client.pipe(server);
-    server.pipe(client);
-
-    let requestData;
-    let responseData;
-    let metaData;
-    let done = false;
-    let cancelled = false;
-    let messageData;
-    let faultMessage;
-    let faultDone = false;
-
-    server.on('request', (request, data) => {
-        assert.strictEqual(request.id, undefined);
-        assert.strictEqual(request._id, undefined);
-
-        if (data.cancel) {
-            request.on('cancel', () => cancelled = true);
-            return;
-        }
-
-        if (data.fail) {
-            request.fault(new Error('failed'));
-            return;
-        }
-
-        requestData = data;
-        request.meta({ columns: ['value'] });
-        request.response({ ok: true });
-        request.done();
+    const clientIds = [];
+    const serverIds = [];
+    server.on('frame', frame => {
+        if (frame.kind === KIND.REQUEST)
+            clientIds.push(frame.id);
+    });
+    client.on('frame', frame => {
+        if (frame.kind === KIND.REQUEST)
+            serverIds.push(frame.id);
     });
 
-    server.on('message', data => messageData = data);
+    server.on('request', (request, data) => {
+        assert.deepEqual(data, { value: 123 });
+        request.meta({ columns: 2 });
+        request.response([1, 2]);
+        request.response([3, 4]);
+        request.done();
+    });
 
     const request = client.request({ value: 123 });
+    const events = [];
 
-    assert.strictEqual(request.id, undefined);
-    assert.strictEqual(request._id, undefined);
+    request.on('meta', data => events.push(['meta', data]));
+    request.on('response', data => events.push(['response', data]));
+    await once(request, 'done');
 
-    request.on('meta', data => metaData = data);
-    request.on('response', data => responseData = data);
-    request.on('done', () => done = true);
+    assert.deepEqual(events, [
+        ['meta', { columns: 2 }],
+        ['response', [1, 2]],
+        ['response', [3, 4]]
+    ]);
+    assert.deepEqual(clientIds, [2]);
 
-    const cancelRequest = client.request({ cancel: true });
-    cancelRequest.cancel();
+    const serverRequestPromise = new Promise(resolve => {
+        client.once('request', request => {
+            request.response('server-request');
+            request.done();
+        });
 
-    const failRequest = client.request({ fail: true });
-    failRequest.on('fault', error => faultMessage = error.message);
-    failRequest.on('done', () => faultDone = true);
+        const serverRequest = server.request('ping');
+        serverRequest.once('response', data => resolve(data));
+    });
 
+    assert.equal(await serverRequestPromise, 'server-request');
+    assert.deepEqual(serverIds, [1]);
+
+    const messagePromise = once(server, 'message');
     client.send({ hello: 'world' });
-
-    await delay(30);
-
-    assert.deepStrictEqual(requestData, { value: 123 });
-    assert.deepStrictEqual(metaData, { columns: ['value'] });
-    assert.deepStrictEqual(responseData, { ok: true });
-    assert.strictEqual(done, true);
-    assert.strictEqual(cancelled, true);
-    assert.deepStrictEqual(messageData, { hello: 'world' });
-    assert.strictEqual(faultMessage, 'failed');
-    assert.strictEqual(faultDone, true);
+    assert.deepEqual((await messagePromise)[0], { hello: 'world' });
 }
 
-async function testRequestWithoutArgument() {
+async function testCodecs() {
+    const sender = new SeamFluxCore(false);
+    const receiver = new SeamFluxCore(true);
+    connectCore(sender, receiver);
+
+    sender.setCodec(CODEC.RAW);
+    const rawPromise = once(receiver, 'message');
+    sender.send('Привет');
+    assert.equal((await rawPromise)[0].toString(), 'Привет');
+
+    sender.setCodec(CODEC.JSON);
+    const jsonPromise = once(receiver, 'message');
+    sender.send({ json: true });
+    assert.deepEqual((await jsonPromise)[0], { json: true });
+
+    sender.setCodec(CODEC.V8);
+    const v8Promise = once(receiver, 'message');
+    sender.send({ bigint: 123n, date: new Date(0) });
+    const data = (await v8Promise)[0];
+    assert.equal(data.bigint, 123n);
+    assert.equal(data.date.getTime(), 0);
+}
+
+async function testDecodeError() {
+    const receiver = new SeamFluxCore(true);
+    const errors = [];
+    const messages = [];
+
+    receiver.on('decodeError', error => errors.push(error));
+    receiver.on('message', data => messages.push(data));
+
+    receiver.input(makeFrame(2, KIND.MESSAGE, CODEC.JSON, Buffer.from('{')));
+    receiver.input(makeFrame(4, KIND.MESSAGE, CODEC.V8, v8.serialize({ ok: true })));
+
+    assert.equal(errors.length, 1);
+    assert.deepEqual(messages, [{ ok: true }]);
+}
+
+async function testProtocolError() {
+    const core = new SeamFluxCore();
+    const errorPromise = once(core, 'protocolError');
+    const head = Buffer.alloc(10);
+    head.writeUInt32BE(9, 0);
+    core.input(head);
+    assert.match((await errorPromise)[0].message, /Invalid frame length/);
+}
+
+async function testReset() {
+    const core = new SeamFluxCore(false);
+    let pendingOutput = 0;
+    core.on('output', () => pendingOutput++);
+    const outgoing = core.request({ value: 1 });
+    const events = [];
+
+    outgoing.on('fault', () => events.push('fault'));
+    outgoing.on('done', () => events.push('done'));
+    core.resetConnection(new Error('closed'));
+    await Promise.resolve();
+    assert.deepEqual(events, ['fault', 'done']);
+    assert.equal(pendingOutput, 0);
+
+    const receiver = new SeamFluxCore(true);
+    let incoming;
+    receiver.on('request', request => incoming = request);
+    receiver.input(makeFrame(2, KIND.REQUEST, CODEC.V8, v8.serialize({ value: 2 })));
+
+    let cancelled = false;
+    incoming.on('cancel', () => cancelled = true);
+    receiver.resetConnection();
+    assert.equal(cancelled, true);
+
+    let output = 0;
+    receiver.on('output', () => output++);
+    incoming.response('stale').done();
+    assert.equal(output, 0);
+}
+
+async function testStream() {
     const client = new SeamFluxStream(false);
     const server = new SeamFluxStream(true);
 
-    client.pipe(server);
-    server.pipe(client);
-
-    let received;
+    assert.equal(typeof client.pipe, 'function');
+    assert.equal(client.setCodec, undefined);
+    assert.equal(client.useCodec, undefined);
+    assert.equal(client.input, undefined);
+    client.pipe(server, { end: false });
+    server.pipe(client, { end: false });
 
     server.on('request', (request, data) => {
-        received = data;
+        request.response({ echo: data });
         request.done();
     });
 
-    client.request();
-    await delay(20);
+    const request = client.request('stream');
+    const responsePromise = once(request, 'response');
+    const donePromise = once(request, 'done');
 
-    assert.strictEqual(received, null);
+    assert.deepEqual((await responsePromise)[0], { echo: 'stream' });
+    await donePromise;
+
+    client.unpipe(server);
+    server.unpipe(client);
+    client.destroy();
+    server.destroy();
 }
 
-async function testDecodeErrorDoesNotBreakPipe() {
-    const source = new PassThrough();
-    const server = new SeamFluxStream(true);
-
-    source.pipe(server, { end: false });
-
-    let decodeError;
-    let received;
-
-    server.on('decodeError', error => decodeError = error);
-    server.on('request', (request, data) => {
-        received = data;
-        request.done();
-    });
-
-    source.write(wireFrame(2, KIND.REQUEST, CODEC.JSON, '{broken'));
-    source.write(wireFrame(4, KIND.REQUEST, CODEC.JSON, JSON.stringify({ ok: true })));
-
-    await delay(20);
-
-    assert(decodeError instanceof Error);
-    assert.deepStrictEqual(received, { ok: true });
-    assert(source.isPaused() === false || source.readableFlowing !== false);
-}
-
-async function testRawUnicodeString() {
-    const client = new SeamFluxStream(false);
-    const server = new SeamFluxStream(true);
-
-    client.setCodec(CODEC.RAW);
-    client.pipe(server);
-    server.pipe(client);
-
-    const received = [];
-
-    server.on('request', (request, data) => {
-        received.push(data.toString());
-        request.done();
-    });
-
-    client.request('héllo');
-    client.request('next');
-
-    await delay(20);
-
-    assert.deepStrictEqual(received, ['héllo', 'next']);
-}
-
-async function testResetConnectionEvents() {
-    const outgoing = new SeamFluxStream(false);
-    const request = outgoing.request({ value: 1 });
-    let fault;
-    let done = false;
-
-    request.on('fault', error => fault = error);
-    request.on('done', () => done = true);
-
-    outgoing.resetConnection();
-
-    assert(fault instanceof Error);
-    assert.strictEqual(fault.message, 'Connection closed');
-    assert.strictEqual(done, true);
-
-    const client = new SeamFluxStream(false);
-    const server = new SeamFluxStream(true);
-
-    client.pipe(server);
-    server.pipe(client);
-
-    let incomingCancelled = false;
-
-    server.on('request', request => {
-        request.on('cancel', () => incomingCancelled = true);
-        server.resetConnection();
-    });
-
-    client.request({ long: true });
-    await delay(20);
-
-    assert.strictEqual(incomingCancelled, true);
-}
-
-async function testSocketServerSurvivesBadClients() {
+async function testSocket() {
     let connections = 0;
-    let protocolErrors = 0;
-    let socketErrors = 0;
-
-    const server = new SocketServer(protocol => {
+    const server = new SocketServer(seam => {
         connections++;
-        protocol.on('protocolError', () => protocolErrors++);
-        protocol.on('socketError', () => socketErrors++);
-    });
 
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const port = server.address().port;
+        if (connections === 1) {
+            setTimeout(() => seam.socket.destroy(), 20);
+            return;
+        }
 
-    await new Promise((resolve, reject) => {
-        const socket = net.connect({ host: '127.0.0.1', port }, () => {
-            const invalid = Buffer.alloc(10);
-            invalid.writeUInt32BE(9, 0);
-            socket.write(invalid);
-        });
-
-        socket.once('close', resolve);
-        socket.once('error', error => {
-            if (error.code !== 'ECONNRESET')
-                reject(error);
+        seam.on('request', (request, data) => {
+            request.response({ echo: data });
+            request.done();
         });
     });
 
-    await delay(10);
-    assert.strictEqual(protocolErrors, 1);
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
 
-    await new Promise((resolve, reject) => {
-        const socket = net.connect({ host: '127.0.0.1', port }, () => {
-            socket.resetAndDestroy();
-        });
+    const { port } = server.address();
+    const client = new SocketClient({ host: '127.0.0.1', port });
+    let connects = 0;
 
-        socket.once('close', resolve);
-        socket.once('error', error => {
-            if (error.code !== 'ECONNRESET')
-                reject(error);
+    const resultPromise = new Promise((resolve, reject) => {
+        client.on('socketError', reject);
+        client.on('connect', () => {
+            connects++;
+            if (connects !== 2)
+                return;
+
+            const request = client.request('socket');
+            request.on('response', resolve);
+            request.on('fault', reject);
         });
     });
 
-    await delay(20);
-    assert(connections >= 2);
-    assert(socketErrors >= 0);
+    client.connect();
+    assert.deepEqual(await resultPromise, { echo: 'socket' });
+    assert.equal(connects, 2);
 
+    client.close();
     await new Promise(resolve => server.close(resolve));
 }
 
-
-async function testFrameKeepsOriginalHead() {
-    const source = new PassThrough();
-    const seam = new SeamFluxStream(true);
-    const wire = wireFrame(2, KIND.REQUEST, CODEC.JSON, JSON.stringify({ value: 1 }));
-    let head;
-
-    source.pipe(seam, { end: false });
-
-    seam.on('frame', frame => {
-        head = frame.head;
-        frame.stream.resume();
-    });
-
-    source.write(wire);
-    await delay(20);
-
-    assert(Buffer.isBuffer(head));
-    assert.deepStrictEqual(head, wire.subarray(0, 10));
-}
-
-async function testHttpMultipleResponses() {
-    const connection = new SeamFluxStream(false);
-    const dataServer = new SeamFluxStream(true);
-
-    connection.socket = { readyState: 'open' };
-    connection.pipe(dataServer);
-    dataServer.pipe(connection);
-
-    dataServer.on('request', (request, data) => {
-        assert.deepStrictEqual(data, { value: 1 });
-        request.meta(['value']);
-        request.response([[1]]);
-        request.response([[2]]);
-        request.done();
-    });
-
-    const middleware = SeamFluxHttp(connection)(req => req.body);
-
-    const web = http.createServer((req, res) => {
-        res.status = code => {
-            res.statusCode = code;
-            return res;
-        };
-
-        res.set = headers => {
-            for (const [name, value] of Object.entries(headers))
-                res.setHeader(name, value);
-            return res;
-        };
-
-        res.type = type => {
-            res.setHeader('Content-Type', type === 'text' ? 'text/plain; charset=utf-8' : type);
-            return res;
-        };
-
-        res.send = data => {
-            res.end(data);
-            return res;
-        };
-
-        const chunks = [];
-        req.on('data', chunk => chunks.push(chunk));
-        req.on('end', () => {
-            req.body = JSON.parse(Buffer.concat(chunks).toString());
-            middleware(req, res);
-        });
-    });
-
-    await new Promise(resolve => web.listen(0, '127.0.0.1', resolve));
-    const port = web.address().port;
-
-    const result = await new Promise((resolve, reject) => {
-        const req = http.request({
-            host: '127.0.0.1',
-            port,
-            method: 'POST',
-            path: '/',
-            headers: { 'Content-Type': 'application/json' }
-        }, res => {
-            const chunks = [];
-            res.on('data', chunk => chunks.push(chunk));
-            res.on('end', () => resolve({ res, body: Buffer.concat(chunks) }));
-        });
-
-        req.once('error', reject);
-        req.end(JSON.stringify({ value: 1 }));
-    });
-
-    assert.strictEqual(result.res.statusCode, 200);
-    assert.strictEqual(result.res.headers['content-length'], undefined);
-    assert.strictEqual(result.res.headers['x-kind'], undefined);
-    assert.strictEqual(result.res.headers['x-codec'], undefined);
-
-    const frames = parseFrames(result.body);
-
-    assert.deepStrictEqual(frames.map(frame => frame.kind), [KIND.META, KIND.RESPONSE, KIND.RESPONSE, KIND.DONE]);
-    assert.deepStrictEqual(JSON.parse(frames[0].payload.toString()), ['value']);
-    assert.deepStrictEqual(JSON.parse(frames[1].payload.toString()), [[1]]);
-    assert.deepStrictEqual(JSON.parse(frames[2].payload.toString()), [[2]]);
-    assert.strictEqual(frames[3].payload.length, 0);
-
-    await new Promise(resolve => web.close(resolve));
-}
-
 (async () => {
-    await testBasicApi();
-    await testRequestWithoutArgument();
-    await testDecodeErrorDoesNotBreakPipe();
-    await testRawUnicodeString();
-    await testResetConnectionEvents();
-    await testSocketServerSurvivesBadClients();
-    await testFrameKeepsOriginalHead();
-    await testHttpMultipleResponses();
-
-    console.log('SeamFlux 2.1.2: OK');
+    await testCore();
+    await testCodecs();
+    await testDecodeError();
+    await testProtocolError();
+    await testReset();
+    await testStream();
+    await testSocket();
+    console.log('SeamFlux 4.0.1 tests: OK');
 })().catch(error => {
     console.error(error);
     process.exitCode = 1;

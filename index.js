@@ -1,12 +1,12 @@
-const { SeamFluxStream, KIND, CODEC } = require('./SeamFluxStream');
+const { SeamFluxCore, KIND, CODEC } = require('./SeamFluxCore');
+const { SeamFluxStream } = require('./SeamFluxStream');
 const { SocketClient, SocketServer, MAX_DELAY } = require('./SeamFluxSocket');
-const SeamFluxHttp = require('./SeamFluxHttp');
 
 module.exports = {
+    SeamFluxCore,
     SeamFluxStream,
     SocketClient,
     SocketServer,
-    SeamFluxHttp,
     KIND,
     CODEC,
     MAX_DELAY

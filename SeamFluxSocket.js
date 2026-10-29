@@ -1,4 +1,4 @@
-const net = require('net');
+const net = require('node:net');
 const { SeamFluxStream } = require('./SeamFluxStream');
 
 const FIRST_DELAY = 1000;
@@ -6,7 +6,6 @@ const MAX_DELAY = 30000;
 
 function attach(socket, protocol) {
     protocol.socket = socket;
-
     socket.pipe(protocol, { end: false });
     protocol.pipe(socket, { end: false });
 }
@@ -25,7 +24,6 @@ class SocketClient extends SeamFluxStream {
 
         this.options = options;
         this.socket = null;
-
         this.timer = null;
         this.delay = FIRST_DELAY;
         this.stopped = true;
@@ -39,7 +37,6 @@ class SocketClient extends SeamFluxStream {
 
         this.stopped = false;
         this._connect();
-
         return this;
     }
 
@@ -48,50 +45,45 @@ class SocketClient extends SeamFluxStream {
             return;
 
         const socket = net.connect(this.options);
-
         this.socket = socket;
         attach(socket, this);
 
         socket.once('connect', () => {
-            this.timer = clearTimeout(this.timer);
+            clearTimeout(this.timer);
+            this.timer = null;
             this.delay = FIRST_DELAY;
-
             this.emit('connect');
         });
 
-        socket.on('error', error => {
-            this.emit('socketError', error);
-        });
-
+        socket.on('error', error => this.emit('socketError', error));
         socket.once('close', hadError => {
             detach(socket, this);
-            this.resetConnection();
 
+            if (this.socket === socket)
+                this.socket = null;
+
+            this.resetConnection();
             this.emit('socketClose', hadError);
             this._reconnect();
         });
     }
 
     _reconnect() {
-        if (this.stopped)
+        if (this.stopped || this.timer)
             return;
 
-        this.timer ??= setTimeout(() => {
+        this.timer = setTimeout(() => {
             this.timer = null;
             this._connect();
-
-            this.delay = Math.min(
-                this.delay * 2,
-                MAX_DELAY
-            );
+            this.delay = Math.min(this.delay * 2, MAX_DELAY);
         }, this.delay);
     }
 
     close() {
         this.stopped = true;
-        this.timer = clearTimeout(this.timer);
+        clearTimeout(this.timer);
+        this.timer = null;
         this.socket?.destroy();
-
         return this;
     }
 }
@@ -105,16 +97,13 @@ class SocketServer extends net.Server {
 
         super(options, socket => {
             const protocol = new SeamFluxStream(true);
-
             attach(socket, protocol);
 
             protocol.on('protocolError', () => socket.destroy());
-
             socket.on('error', error => {
                 protocol.emit('socketError', error);
                 socket.destroy();
             });
-
             socket.once('close', () => {
                 detach(socket, protocol);
                 protocol.resetConnection();
