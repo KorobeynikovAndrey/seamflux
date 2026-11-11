@@ -4,6 +4,7 @@ const { once } = require('node:events');
 const {
     SeamFluxCore,
     SeamFluxStream,
+    SeamFluxEvents,
     SocketClient,
     SocketServer,
     KIND,
@@ -81,6 +82,31 @@ async function testCore() {
     const messagePromise = once(server, 'message');
     client.send({ hello: 'world' });
     assert.deepEqual((await messagePromise)[0], { hello: 'world' });
+}
+
+async function testEvents() {
+    const client = new SeamFluxCore(false);
+    const server = new SeamFluxCore(true);
+    connectCore(client, server);
+
+    const clientEvents = new SeamFluxEvents(client);
+    const serverEvents = new SeamFluxEvents(server);
+    const received = [];
+    const handler = data => received.push(data);
+
+    serverEvents.on('vehicle:update', handler);
+    clientEvents.emit('vehicle:update', { id: 123, speed: 45 });
+    await once(server, 'message');
+    assert.deepEqual(received, [{ id: 123, speed: 45 }]);
+
+    serverEvents.off('vehicle:update', handler);
+    clientEvents.emit('vehicle:update', { id: 456 });
+    await once(server, 'message');
+    assert.equal(received.length, 1);
+
+    const reply = new Promise(resolve => clientEvents.on('vehicle:reply', resolve));
+    serverEvents.emit('vehicle:reply', 'ok');
+    assert.equal(await reply, 'ok');
 }
 
 async function testCodecs() {
@@ -235,13 +261,14 @@ async function testSocket() {
 
 (async () => {
     await testCore();
+    await testEvents();
     await testCodecs();
     await testDecodeError();
     await testProtocolError();
     await testReset();
     await testStream();
     await testSocket();
-    console.log('SeamFlux 4.0.1 tests: OK');
+    console.log('SeamFlux 4.0.2 tests: OK');
 })().catch(error => {
     console.error(error);
     process.exitCode = 1;

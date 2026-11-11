@@ -1,4 +1,4 @@
-# SeamFlux 4.0.1
+# SeamFlux 4.0.2
 
 SeamFlux is a compact framed request/response protocol for Node.js.
 
@@ -24,6 +24,7 @@ const {
     SeamFluxStream,
     SocketClient,
     SocketServer,
+    SeamFluxEvents,
     KIND,
     CODEC
 } = require('seamflux');
@@ -62,6 +63,21 @@ A request may receive multiple `response` events before `done`.
 sf.send({ hello: 'world' });
 sf.on('message', data => {});
 ```
+
+## Named events
+
+`SeamFluxEvents` is an optional wrapper around a Core, Stream or Socket instance:
+
+```js
+const events = new SeamFluxEvents(sf);
+
+const handler = data => console.log(data);
+events.on('vehicle:update', handler);
+events.emit('vehicle:update', { id: 123, speed: 45 });
+events.off('vehicle:update', handler);
+```
+
+`emit()` sends `{ event, data }` using `sf.send()`. Incoming `message` frames are dispatched to named listeners. The existing `sf.request()` API is unchanged.
 
 ## Codecs
 

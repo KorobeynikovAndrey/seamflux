@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.0.2
+
+- Added optional `SeamFluxEvents` wrapper for named `emit()`, `on()` and `off()` over `send()` / `message`.
+
 ## 4.0.1
 
 - Removed browser-oriented byte normalization from `SeamFluxCore`; Core now works directly with Node.js `Buffer`.
