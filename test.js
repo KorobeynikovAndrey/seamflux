@@ -222,7 +222,7 @@ async function testEventConnectionMeta() {
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
 
-    const client = new SFEventClient({ host: '127.0.0.1', port: server.address().port, meta: initial });
+    const client = new SFEventClient({ host: '127.0.0.1', port: server.address().port }, initial);
     client.connect();
     assert.deepEqual(await client.emit('inspect'), initial);
     assert.deepEqual(ready, [initial]);
@@ -406,7 +406,7 @@ async function testSocket() {
     await testReset();
     await testStream();
     await testSocket();
-    console.log('SeamFlux 4.0.5 tests: OK');
+    console.log('SeamFlux 4.0.6 tests: OK');
 })().catch(error => {
     console.error(error);
     process.exitCode = 1;

@@ -1,6 +1,6 @@
 const { SFEventClient } = require('..');
 
-const client = new SFEventClient({ host: '127.0.0.1', port: 5000, meta: { clientId: 42 } });
+const client = new SFEventClient({ host: '127.0.0.1', port: 5000 }, { clientId: 42 });
 
 (async () => {
     client.connect();

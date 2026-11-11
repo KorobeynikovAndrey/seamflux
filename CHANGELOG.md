@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.0.6
+
+- `SFEventClient(options, meta)` now takes connection metadata as a separate second argument instead of `options.meta`.
+- Updated documentation, examples, and tests.
+
 ## 4.0.5
 
 - Added connection-level `META` frames with `id = 0` and `connectionMeta` event in Core.

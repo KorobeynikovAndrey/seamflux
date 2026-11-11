@@ -1,4 +1,4 @@
-# SeamFlux 4.0.5 — AI Usage Guide
+# SeamFlux 4.0.6 — AI Usage Guide
 
 SeamFlux is Node.js-only.
 

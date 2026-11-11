@@ -2,12 +2,11 @@ const { SocketClient, SocketServer } = require('./SeamFluxSocket');
 const { SeamFluxEvents } = require('./SeamFluxEvents');
 
 class SFEventClient extends SeamFluxEvents {
-    constructor(options = {}) {
-        const { meta, ...socketOptions } = options;
-        const sf = new SocketClient(socketOptions);
+    constructor(options = {}, meta = null) {
+        const sf = new SocketClient(options);
         super(sf);
 
-        this.meta = meta ?? null;
+        this.meta = meta;
         sf.core.sendConnectionMeta(this.meta);
         sf.on('socketClose', () => {
             if (!sf.stopped)
