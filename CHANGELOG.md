@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.5
+
+- Added connection-level `META` frames with `id = 0` and `connectionMeta` event in Core.
+- `SFEventClient` sends initial metadata before requests and again after reconnect; `updateMeta()` sends updates.
+- `SFEventServer` receives and updates `conn.meta`, invoking the connection listener after initial metadata.
+- Request-scoped `request.meta()` remains unchanged.
+
 ## 4.0.4
 
 - Added `SFEventClient` and `SFEventServer` with direct `emit()` / `on()` / `off()` / `once()`.

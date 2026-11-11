@@ -1,4 +1,4 @@
-# SeamFlux 4.0.4 — AI Usage Guide
+# SeamFlux 4.0.5 — AI Usage Guide
 
 SeamFlux is Node.js-only.
 
@@ -41,3 +41,5 @@ On connection reset:
 - outgoing requests -> `fault`, then `done`;
 - incoming requests -> `cancel`;
 - old Request objects cannot write to a new connection.
+
+Connection-level META uses id=0; request-scoped META uses the request id. Socket wrappers use stream.core directly.

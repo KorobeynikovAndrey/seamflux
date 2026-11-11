@@ -86,6 +86,44 @@ async function testCore() {
     assert.deepEqual((await messagePromise)[0], { hello: 'world' });
 }
 
+async function testConnectionMetaCore() {
+    const client = new SeamFluxCore(false);
+    const server = new SeamFluxCore(true);
+    connectCore(client, server);
+
+    const order = [];
+    server.on('connectionMeta', data => order.push(['connectionMeta', data]));
+    server.on('request', (request, data) => {
+        order.push(['request', data]);
+        request.on('meta', meta => {
+            order.push(['requestMeta', meta]);
+            request.done();
+        });
+    });
+
+    client.sendConnectionMeta({ auth: { token: 'one' } });
+    const request = client.request('test');
+    request.meta({ progress: 30 });
+    await once(request, 'done');
+
+    assert.deepEqual(order, [
+        ['connectionMeta', { auth: { token: 'one' } }],
+        ['request', 'test'],
+        ['requestMeta', { progress: 30 }]
+    ]);
+    assert.equal(server._requests.size, 0);
+
+    client.sendConnectionMeta({ auth: { token: 'two' } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(order.at(-1), ['connectionMeta', { auth: { token: 'two' } }]);
+
+    const error = await new Promise(resolve => {
+        server.once('decodeError', resolve);
+        server.input(makeFrame(0, KIND.META, CODEC.JSON, Buffer.from('{')));
+    });
+    assert.ok(error instanceof Error);
+}
+
 async function testEvents() {
     const client = new SeamFluxCore(false);
     const server = new SeamFluxCore(true);
@@ -165,6 +203,42 @@ async function testEventSocket() {
     client.emit('update', { id: 5 });
     assert.deepEqual(await client.emit('getStatus', { id: 6 }), { id: 6, status: 'ok' });
     assert.equal(await acknowledgement, 5);
+
+    client.close();
+    await new Promise(resolve => server.close(resolve));
+}
+
+async function testEventConnectionMeta() {
+    const initial = { auth: { token: 'alpha' }, clientId: 42 };
+    const updated = { auth: { token: 'beta' }, clientId: 42 };
+    const seen = [];
+    const ready = [];
+    const server = new SFEventServer(conn => {
+        seen.push(conn);
+        ready.push(conn.meta);
+        conn.on('inspect', () => conn.meta);
+    });
+
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+
+    const client = new SFEventClient({ host: '127.0.0.1', port: server.address().port, meta: initial });
+    client.connect();
+    assert.deepEqual(await client.emit('inspect'), initial);
+    assert.deepEqual(ready, [initial]);
+
+    client.updateMeta(updated);
+    assert.deepEqual(await client.emit('inspect'), updated);
+    assert.deepEqual(seen[0].meta, updated);
+    assert.equal(ready.length, 1);
+
+    const socketClosed = once(client.sf, 'socketClose');
+    const reconnected = once(client.sf, 'connect');
+    seen[0].sf.socket.destroy();
+    await socketClosed;
+    await reconnected;
+    assert.deepEqual(await client.emit('inspect'), updated);
+    assert.deepEqual(ready, [initial, updated]);
 
     client.close();
     await new Promise(resolve => server.close(resolve));
@@ -322,15 +396,17 @@ async function testSocket() {
 
 (async () => {
     await testCore();
+    await testConnectionMetaCore();
     await testEvents();
     await testEventSocket();
+    await testEventConnectionMeta();
     await testCodecs();
     await testDecodeError();
     await testProtocolError();
     await testReset();
     await testStream();
     await testSocket();
-    console.log('SeamFlux 4.0.4 tests: OK');
+    console.log('SeamFlux 4.0.5 tests: OK');
 })().catch(error => {
     console.error(error);
     process.exitCode = 1;

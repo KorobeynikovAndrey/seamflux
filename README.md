@@ -1,4 +1,4 @@
-# SeamFlux 4.0.4
+# SeamFlux 4.0.5
 
 SeamFlux is a compact framed request/response protocol for Node.js.
 
@@ -16,7 +16,7 @@ SFEventServer   socket server yielding event connections
 ## Install
 
 ```bash
-npm install ./SeamFlux-4.0.4.tgz
+npm install ./SeamFlux-4.0.5.tgz
 ```
 
 ## API
@@ -68,6 +68,32 @@ A request may receive multiple `response` events before `done`.
 sf.send({ hello: 'world' });
 sf.on('message', data => {});
 ```
+
+## Connection metadata
+
+`SFEventClient` sends a connection-level `META` frame (`id = 0`) automatically before ordinary requests. Its `meta` option may contain arbitrary values:
+
+```js
+const client = new SFEventClient({
+    host: '127.0.0.1',
+    port: 5000,
+    meta: { auth: { token: 'abc123' }, clientId: 42 }
+});
+client.connect();
+```
+
+`SFEventServer` calls its connection listener after the first `META` arrives, and exposes the current value as `conn.meta`:
+
+```js
+const server = new SFEventServer(conn => {
+    console.log(conn.meta);
+    conn.on('getStatus', data => ({ id: data.id, status: 'ok' }));
+});
+```
+
+The client sends the latest `meta` again after reconnection. `client.updateMeta(data)` sends new connection metadata and uses it for future reconnections. The server replaces `conn.meta` when it receives a new connection-level `META` frame. When the client has no `meta` option it sends `null`, so connection setup still completes.
+
+For direct Core usage, `core.sendConnectionMeta(data)` sends `META` with `id = 0` and the receiver emits `connectionMeta(data)`. Existing `request.meta(data)` retains its request ID and continues to emit `meta` on that request. `SeamFluxStream` is unchanged; socket wrappers access `sf.core` for connection metadata.
 
 ## Named events
 

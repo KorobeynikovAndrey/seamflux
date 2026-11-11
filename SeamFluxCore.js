@@ -115,7 +115,16 @@ const kindHandlers = new Map([
         });
     }],
     [KIND.RESPONSE, (core, frame) => core._decodeRequestEvent(frame, 'response')],
-    [KIND.META, (core, frame) => core._decodeRequestEvent(frame, 'meta')],
+    [KIND.META, (core, frame) => {
+        if (frame.id !== 0)
+            return core._decodeRequestEvent(frame, 'meta');
+
+        core._decode(frame, (error, data) => {
+            if (error) return core.emit('decodeError', error, frame);
+            if (frame.generation === core._generation)
+                core.emit('connectionMeta', data);
+        });
+    }],
     [KIND.ERROR, (core, frame) => core._decodeRequestEvent(frame, 'fault', data => new Error(data.message))],
     [KIND.DONE, (core, frame) => core._finishRequest(frame, 'done')],
     [KIND.CANCEL, (core, frame) => core._finishRequest(frame, 'cancel')]
@@ -162,6 +171,11 @@ class SeamFluxCore extends EventEmitter {
 
         this._send(id, KIND.MESSAGE, data);
         this._send(id, KIND.DONE);
+        return this;
+    }
+
+    sendConnectionMeta(data = null) {
+        this._send(0, KIND.META, data);
         return this;
     }
 
