@@ -1,4 +1,4 @@
-# SeamFlux 4.0.3 — AI Usage Guide
+# SeamFlux 4.0.4 — AI Usage Guide
 
 SeamFlux is Node.js-only.
 
@@ -13,7 +13,7 @@ SeamFluxSocket.js  net.Socket / net.Server adapter
 ```
 
 `SeamFluxCore` is the single parser, codec registry and request lifecycle implementation.
-`SeamFluxEvents` is a separate `EventEmitter` wrapper; acknowledgements reuse Core requests.
+`SeamFluxEvents` uses internal `EventEmitter` listeners and Core requests; `SFEventClient` and `SFEventServer` expose direct named-event methods.
 `SeamFluxStream` must not implement a second parser or second request lifecycle and must not duplicate Core codec APIs.
 
 Default codec: `CODEC.V8` using `node:v8` `serialize()` / `deserialize()`.

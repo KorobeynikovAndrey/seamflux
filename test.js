@@ -1,10 +1,12 @@
 const assert = require('node:assert/strict');
 const v8 = require('node:v8');
-const { once, EventEmitter } = require('node:events');
+const { once } = require('node:events');
 const {
     SeamFluxCore,
     SeamFluxStream,
     SeamFluxEvents,
+    SFEventClient,
+    SFEventServer,
     SocketClient,
     SocketServer,
     KIND,
@@ -91,68 +93,81 @@ async function testEvents() {
 
     const clientEvents = new SeamFluxEvents(client);
     const serverEvents = new SeamFluxEvents(server);
-    assert.ok(clientEvents instanceof EventEmitter);
-
     const received = [];
-    const handler = data => received.push(data);
-    serverEvents.on('vehicle:update', handler);
+    const handler = data => { received.push(data); };
 
-    clientEvents.emit('vehicle:update', { id: 123, speed: 45 });
-    await once(server, 'message');
+    serverEvents.on('vehicle:update', handler);
+    assert.equal(await clientEvents.emit('vehicle:update', { id: 123, speed: 45 }), undefined);
     assert.deepEqual(received, [{ id: 123, speed: 45 }]);
 
     serverEvents.off('vehicle:update', handler);
-    clientEvents.emit('vehicle:update', { id: 456 });
-    await once(server, 'message');
+    await clientEvents.emit('vehicle:update', { id: 456 });
     assert.equal(received.length, 1);
 
-    const notification = once(clientEvents, 'vehicle:reply');
-    serverEvents.emit('vehicle:reply', 'ok');
-    assert.equal((await notification)[0], 'ok');
+    let onlyOnce = 0;
+    serverEvents.once('once', () => ++onlyOnce);
+    assert.equal(await clientEvents.emit('once'), 1);
+    assert.equal(await clientEvents.emit('once'), undefined);
+    assert.equal(onlyOnce, 1);
 
-    serverEvents.on('getStatus', (data, reply) => {
-        assert.deepEqual(data, { id: 123 });
-        reply({ id: data.id, status: 'ok' });
-        reply({ status: 'duplicate' });
+    serverEvents.on('getStatus', async data => ({ id: data.id, status: 'ok' }));
+    assert.deepEqual(await clientEvents.emit('getStatus', { id: 123 }), { id: 123, status: 'ok' });
+
+    clientEvents.on('echo', data => data);
+    assert.equal(await serverEvents.emit('echo', 'from server'), 'from server');
+
+    serverEvents.on('multiple', async () => {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return 'slow';
     });
-
-    const response = await new Promise(resolve => {
-        clientEvents.emit('getStatus', { id: 123 }, resolve);
+    serverEvents.on('multiple', async () => {
+        await new Promise(resolve => setTimeout(resolve, 1));
+        return 'fast';
     });
-    assert.deepEqual(response, { id: 123, status: 'ok' });
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(client._requests.size, 0);
-    assert.equal(server._requests.size, 0);
+    assert.equal(await clientEvents.emit('multiple'), 'fast');
 
-    clientEvents.on('echo', (data, reply) => reply(data));
-    const serverResponse = await new Promise(resolve => {
-        serverEvents.emit('echo', 'from server', resolve);
-    });
-    assert.equal(serverResponse, 'from server');
+    serverEvents.on('undefined', () => undefined);
+    serverEvents.on('undefined', () => 'result');
+    assert.equal(await clientEvents.emit('undefined'), 'result');
 
-    let unexpectedResponse = false;
-    clientEvents.emit('missing', null, () => unexpectedResponse = true);
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(unexpectedResponse, false);
-    assert.equal(client._requests.size, 0);
+    assert.equal(await clientEvents.emit('missing'), undefined);
+    serverEvents.on('failure', () => { throw new Error('failed'); });
+    await assert.rejects(clientEvents.emit('failure'), /failed/);
 
-    let delayedReply;
-    serverEvents.on('delayed', (data, reply) => delayedReply = reply);
-    clientEvents.emit('delayed', null, () => unexpectedResponse = true);
+    let resolveLater;
+    serverEvents.on('delayed', () => new Promise(resolve => resolveLater = resolve));
+    const waiting = clientEvents.emit('delayed');
     await new Promise(resolve => setImmediate(resolve));
     client.resetConnection();
     server.resetConnection();
-    delayedReply('too late');
+    await assert.rejects(waiting, /Connection closed/);
+    resolveLater('too late');
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(unexpectedResponse, false);
-    assert.equal(server._requests.size, 0);
 
-    let newListeners = 0;
-    const meta = () => newListeners++;
-    clientEvents.on('newListener', meta);
-    clientEvents.on('test:meta', () => {});
-    assert.equal(newListeners, 1);
-    clientEvents.off('newListener', meta);
+    assert.equal(client._requests.size, 0);
+    assert.equal(server._requests.size, 0);
+}
+
+async function testEventSocket() {
+    const server = new SFEventServer(conn => {
+        conn.on('getStatus', data => ({ id: data.id, status: 'ok' }));
+        conn.on('update', data => {
+            conn.emit('ack', data.id);
+        });
+    });
+
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+
+    const client = new SFEventClient({ host: '127.0.0.1', port: server.address().port });
+    const acknowledgement = new Promise(resolve => client.on('ack', resolve));
+    client.connect();
+    client.emit('update', { id: 5 });
+    assert.deepEqual(await client.emit('getStatus', { id: 6 }), { id: 6, status: 'ok' });
+    assert.equal(await acknowledgement, 5);
+
+    client.close();
+    await new Promise(resolve => server.close(resolve));
 }
 
 async function testCodecs() {
@@ -308,13 +323,14 @@ async function testSocket() {
 (async () => {
     await testCore();
     await testEvents();
+    await testEventSocket();
     await testCodecs();
     await testDecodeError();
     await testProtocolError();
     await testReset();
     await testStream();
     await testSocket();
-    console.log('SeamFlux 4.0.3 tests: OK');
+    console.log('SeamFlux 4.0.4 tests: OK');
 })().catch(error => {
     console.error(error);
     process.exitCode = 1;

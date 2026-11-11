@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.4
+
+- Added `SFEventClient` and `SFEventServer` with direct `emit()` / `on()` / `off()` / `once()`.
+- Reworked `SeamFluxEvents` to use internal `EventEmitter`, return handler values (including async), and resolve `await emit()` from the first response at `DONE`.
+- Updated tests, documentation and TCP examples.
+
 ## 4.0.3
 
 - `SeamFluxEvents` now inherits from Node.js `EventEmitter`.

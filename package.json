@@ -1,6 +1,6 @@
 {
     "name": "seamflux",
-    "version": "4.0.3",
+    "version": "4.0.4",
     "description": "Compact framed request/response protocol for Node.js",
     "main": "index.js",
     "type": "commonjs",
@@ -10,6 +10,7 @@
         "SeamFluxStream.js",
         "SeamFluxSocket.js",
         "SeamFluxEvents.js",
+        "SFEventSocket.js",
         "LICENSE",
         "README.md",
         "CHANGELOG.md",

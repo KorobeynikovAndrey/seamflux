@@ -1,4 +1,4 @@
-# SeamFlux 4.0.3
+# SeamFlux 4.0.4
 
 SeamFlux is a compact framed request/response protocol for Node.js.
 
@@ -8,13 +8,15 @@ The transport and protocol layers are:
 SeamFluxCore    protocol, framing, codecs and request lifecycle
 SeamFluxStream  Node.js Duplex wrapper around SeamFluxCore
 SeamFluxSocket  TCP / Named Pipe client and server
-SeamFluxEvents  optional named-event wrapper for any of the above
+SeamFluxEvents  event dispatcher over a SeamFlux instance
+SFEventClient   ready-to-use event client over SocketClient
+SFEventServer   socket server yielding event connections
 ```
 
 ## Install
 
 ```bash
-npm install seamflux
+npm install ./SeamFlux-4.0.4.tgz
 ```
 
 ## API
@@ -26,6 +28,8 @@ const {
     SocketClient,
     SocketServer,
     SeamFluxEvents,
+    SFEventClient,
+    SFEventServer,
     KIND,
     CODEC
 } = require('seamflux');
@@ -67,42 +71,47 @@ sf.on('message', data => {});
 
 ## Named events
 
-`SeamFluxEvents` extends Node.js `EventEmitter`. It wraps an existing `SeamFluxCore`, `SeamFluxStream` or `SocketClient` (or a server-side accepted stream), without changing the transport.
+`SFEventClient` and `SFEventServer` provide `on()`, `off()`, `once()` and remote `emit()` directly. They use the existing socket transport and request protocol.
 
-Send an event and handle it on the other side:
-
-```js
-const events = new SeamFluxEvents(sf);
-const handler = data => console.log(data);
-
-events.on('vehicle:update', handler);
-events.emit('vehicle:update', { id: 123, speed: 45 });
-events.off('vehicle:update', handler);
-```
-
-`emit(event, data)` uses `sf.send({ event, data })`. `on`, `off`, `once` and other listener methods are inherited from `EventEmitter`. `emit` is overridden to send a **remote** event.
-
-To receive a single response, provide a callback to `emit`:
+Server (`example/events-server.js`):
 
 ```js
-// Client
-const events = new SeamFluxEvents(sf);
-events.emit('getStatus', { id: 123 }, status => {
-    console.log(status);
+const { SFEventServer } = require('seamflux');
+
+const server = new SFEventServer(conn => {
+    conn.on('vehicle:update', data => console.log(data));
+    conn.on('getStatus', async data => ({ id: data.id, status: 'ok' }));
 });
+
+server.listen(5000);
 ```
+
+Client (`example/events-client.js`):
 
 ```js
-// Server
-const events = new SeamFluxEvents(sf);
-events.on('getStatus', (data, reply) => {
-    reply({ id: data.id, status: 'ok' });
-});
+const { SFEventClient } = require('seamflux');
+
+const client = new SFEventClient({ host: '127.0.0.1', port: 5000 });
+client.connect();
+
+client.emit('vehicle:update', { id: 123, speed: 45 });
+const status = await client.emit('getStatus', { id: 123 });
+console.log(status);
+client.close();
 ```
 
-With a callback, `emit()` uses `sf.request({ event, data })`; `reply(value)` calls `request.response(value)` followed by `request.done()`. The reply function responds at most once. If there is no matching listener, the request ends without a response. If a listener does not invoke `reply`, no response is sent; the underlying request is completed on disconnect. The callback receives the reply value (not an error-first argument).
+Each `emit(event, data)` sends a request and returns a Promise. Without `await`, it sends the event without using its result. With `await`, it resolves with the first response after `DONE`, or `undefined` when no handler returns a value. A connection fault rejects the Promise.
 
-For a working TCP client/server example, see `example/events-server.js` and `example/events-client.js`.
+Handlers return values directly; `async` handlers are supported. If multiple handlers are registered, the first one to finish with a value other than `undefined` supplies the response; other results are ignored. Each handled request sends one `RESPONSE` followed by `DONE` (or only `DONE` when there is no response). A handler error is returned as a fault if no handler produces a response.
+
+`SeamFluxEvents` can also wrap a standalone `SeamFluxCore`, `SeamFluxStream` or `SocketClient`:
+
+```js
+const events = new SeamFluxEvents(sf);
+events.on('ping', () => 'pong');
+```
+
+The event layer uses an internal `EventEmitter` for listeners, without inheriting or overriding its `emit()` method. `SocketClient` and `SocketServer` remain available separately as transport classes. For client transport lifecycle events, use `client.sf.on('connect', ...)` or `client.sf.on('socketClose', ...)`.
 
 ## Codecs
 
