@@ -1,6 +1,6 @@
 {
     "name": "seamflux",
-    "version": "4.0.2",
+    "version": "4.0.3",
     "description": "Compact framed request/response protocol for Node.js",
     "main": "index.js",
     "type": "commonjs",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.3
+
+- `SeamFluxEvents` now inherits from Node.js `EventEmitter`.
+- Added event acknowledgements using existing `request()` / `response()` / `done()`.
+- Added complete named-events TCP client/server examples and documentation.
+
 ## 4.0.2
 
 - Added optional `SeamFluxEvents` wrapper for named `emit()`, `on()` and `off()` over `send()` / `message`.

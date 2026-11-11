@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const v8 = require('node:v8');
-const { once } = require('node:events');
+const { once, EventEmitter } = require('node:events');
 const {
     SeamFluxCore,
     SeamFluxStream,
@@ -91,10 +91,12 @@ async function testEvents() {
 
     const clientEvents = new SeamFluxEvents(client);
     const serverEvents = new SeamFluxEvents(server);
+    assert.ok(clientEvents instanceof EventEmitter);
+
     const received = [];
     const handler = data => received.push(data);
-
     serverEvents.on('vehicle:update', handler);
+
     clientEvents.emit('vehicle:update', { id: 123, speed: 45 });
     await once(server, 'message');
     assert.deepEqual(received, [{ id: 123, speed: 45 }]);
@@ -104,9 +106,53 @@ async function testEvents() {
     await once(server, 'message');
     assert.equal(received.length, 1);
 
-    const reply = new Promise(resolve => clientEvents.on('vehicle:reply', resolve));
+    const notification = once(clientEvents, 'vehicle:reply');
     serverEvents.emit('vehicle:reply', 'ok');
-    assert.equal(await reply, 'ok');
+    assert.equal((await notification)[0], 'ok');
+
+    serverEvents.on('getStatus', (data, reply) => {
+        assert.deepEqual(data, { id: 123 });
+        reply({ id: data.id, status: 'ok' });
+        reply({ status: 'duplicate' });
+    });
+
+    const response = await new Promise(resolve => {
+        clientEvents.emit('getStatus', { id: 123 }, resolve);
+    });
+    assert.deepEqual(response, { id: 123, status: 'ok' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(client._requests.size, 0);
+    assert.equal(server._requests.size, 0);
+
+    clientEvents.on('echo', (data, reply) => reply(data));
+    const serverResponse = await new Promise(resolve => {
+        serverEvents.emit('echo', 'from server', resolve);
+    });
+    assert.equal(serverResponse, 'from server');
+
+    let unexpectedResponse = false;
+    clientEvents.emit('missing', null, () => unexpectedResponse = true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(unexpectedResponse, false);
+    assert.equal(client._requests.size, 0);
+
+    let delayedReply;
+    serverEvents.on('delayed', (data, reply) => delayedReply = reply);
+    clientEvents.emit('delayed', null, () => unexpectedResponse = true);
+    await new Promise(resolve => setImmediate(resolve));
+    client.resetConnection();
+    server.resetConnection();
+    delayedReply('too late');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(unexpectedResponse, false);
+    assert.equal(server._requests.size, 0);
+
+    let newListeners = 0;
+    const meta = () => newListeners++;
+    clientEvents.on('newListener', meta);
+    clientEvents.on('test:meta', () => {});
+    assert.equal(newListeners, 1);
+    clientEvents.off('newListener', meta);
 }
 
 async function testCodecs() {
@@ -268,7 +314,7 @@ async function testSocket() {
     await testReset();
     await testStream();
     await testSocket();
-    console.log('SeamFlux 4.0.2 tests: OK');
+    console.log('SeamFlux 4.0.3 tests: OK');
 })().catch(error => {
     console.error(error);
     process.exitCode = 1;

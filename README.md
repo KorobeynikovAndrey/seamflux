@@ -1,13 +1,14 @@
-# SeamFlux 4.0.2
+# SeamFlux 4.0.3
 
 SeamFlux is a compact framed request/response protocol for Node.js.
 
-The package contains three layers:
+The transport and protocol layers are:
 
 ```text
 SeamFluxCore    protocol, framing, codecs and request lifecycle
 SeamFluxStream  Node.js Duplex wrapper around SeamFluxCore
 SeamFluxSocket  TCP / Named Pipe client and server
+SeamFluxEvents  optional named-event wrapper for any of the above
 ```
 
 ## Install
@@ -66,18 +67,42 @@ sf.on('message', data => {});
 
 ## Named events
 
-`SeamFluxEvents` is an optional wrapper around a Core, Stream or Socket instance:
+`SeamFluxEvents` extends Node.js `EventEmitter`. It wraps an existing `SeamFluxCore`, `SeamFluxStream` or `SocketClient` (or a server-side accepted stream), without changing the transport.
+
+Send an event and handle it on the other side:
 
 ```js
 const events = new SeamFluxEvents(sf);
-
 const handler = data => console.log(data);
+
 events.on('vehicle:update', handler);
 events.emit('vehicle:update', { id: 123, speed: 45 });
 events.off('vehicle:update', handler);
 ```
 
-`emit()` sends `{ event, data }` using `sf.send()`. Incoming `message` frames are dispatched to named listeners. The existing `sf.request()` API is unchanged.
+`emit(event, data)` uses `sf.send({ event, data })`. `on`, `off`, `once` and other listener methods are inherited from `EventEmitter`. `emit` is overridden to send a **remote** event.
+
+To receive a single response, provide a callback to `emit`:
+
+```js
+// Client
+const events = new SeamFluxEvents(sf);
+events.emit('getStatus', { id: 123 }, status => {
+    console.log(status);
+});
+```
+
+```js
+// Server
+const events = new SeamFluxEvents(sf);
+events.on('getStatus', (data, reply) => {
+    reply({ id: data.id, status: 'ok' });
+});
+```
+
+With a callback, `emit()` uses `sf.request({ event, data })`; `reply(value)` calls `request.response(value)` followed by `request.done()`. The reply function responds at most once. If there is no matching listener, the request ends without a response. If a listener does not invoke `reply`, no response is sent; the underlying request is completed on disconnect. The callback receives the reply value (not an error-first argument).
+
+For a working TCP client/server example, see `example/events-server.js` and `example/events-client.js`.
 
 ## Codecs
 
